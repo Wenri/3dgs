@@ -121,9 +121,13 @@ def readColmapCameras(cam_extrinsics: dict, cam_intrinsics, images_folder):
 def fetchPly(path):
     plydata = PlyData.read(path)
     vertices = plydata['vertex']
+    properties = set(a.name for a in vertices.properties)
     positions = np.vstack([vertices['x'], vertices['y'], vertices['z']]).T
     colors = np.vstack([vertices['red'], vertices['green'], vertices['blue']]).T / 255.0
-    normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    if 'nx' in properties:
+        normals = np.vstack([vertices['nx'], vertices['ny'], vertices['nz']]).T
+    else:
+        normals = np.zeros_like(positions)
     return BasicPointCloud(points=positions, colors=colors, normals=normals)
 
 
@@ -185,6 +189,9 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         pcd = fetchPly(ply_path)
     except:
         pcd = None
+
+    if (fused_ply := Path(path, 'fused.ply')).exists():
+        pcd = fetchPly(fused_ply)
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
