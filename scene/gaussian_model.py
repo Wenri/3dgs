@@ -123,9 +123,9 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, pcd: BasicPointCloud, spatial_lr_scale: float, max_points: int = 5000000):
+    def create_from_pcd(self, pcd: BasicPointCloud, spatial_lr_scale: float, max_points: int = 0):  # 5000000
         self.spatial_lr_scale = spatial_lr_scale
-        perm = torch.randperm(pcd.points.shape[0])[:max_points]
+        perm = torch.randperm(pcd.points.shape[0])[:max_points] if max_points else slice(None)
         fused_point_cloud = torch.from_numpy(np.asanyarray(pcd.points))[perm, ...].to(
             dtype=torch.float32, device="cuda")
         fused_color = RGB2SH(torch.from_numpy(np.asanyarray(pcd.colors))[perm, ...].to(
