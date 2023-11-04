@@ -96,7 +96,8 @@ class GaussianModel:
 
     @property
     def get_scaling(self):
-        return self.scaling_activation(self._scaling)
+        min_scaling = torch.min(self._scaling, dim=1, keepdim=True).values
+        return self.scaling_activation(min_scaling.expand_as(self._scaling))
 
     @property
     def get_rotation(self):
