@@ -96,7 +96,8 @@ class GaussianModel:
 
     @property
     def get_scaling(self):
-        min_scaling = torch.min(self._scaling, dim=1, keepdim=True).values
+        # min_scaling = torch.min(self._scaling, dim=1, keepdim=True).values
+        min_scaling = self._scaling
         return self.scaling_activation(min_scaling.expand_as(self._scaling))
 
     @property
@@ -124,7 +125,7 @@ class GaussianModel:
         if self.active_sh_degree < self.max_sh_degree:
             self.active_sh_degree += 1
 
-    def create_from_pcd(self, pcd: BasicPointCloud, spatial_lr_scale: float, max_points: int = 0):  # 5000000
+    def create_from_pcd(self, pcd: BasicPointCloud, spatial_lr_scale: float, max_points: int = 10000):  # 5000000
         self.spatial_lr_scale = spatial_lr_scale
         perm = torch.randperm(pcd.points.shape[0])[:max_points] if max_points else slice(None)
         fused_point_cloud = torch.from_numpy(np.asanyarray(pcd.points))[perm, ...].to(
