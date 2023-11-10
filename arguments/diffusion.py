@@ -4,7 +4,7 @@ from types import SimpleNamespace
 from submodules.diffusionerf.main_nerf import run
 
 args = SimpleNamespace(
-    path=Path('/md/Datasets/nerf_good/nerf_llff_data/room'),
+    path=Path('/home/wenri/pCloudDrive/ResearchProjects/3DGS/nerf_llff_data/room'),
     test=False,
     workspace=Path('runs/example/3_poses/room'),
     seed=0,
