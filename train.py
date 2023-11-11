@@ -18,6 +18,7 @@ import torch
 from tqdm import tqdm
 
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from arguments.diffusion import DiffusionParams
 from arguments.gaussian import parse_args
 from gaussian_renderer import render, network_gui
 from scene import Scene, GaussianModel
@@ -27,7 +28,7 @@ from utils.loss_utils import l1_loss, ssim
 
 
 class GBCTrainer(GaussianModel):
-    def __init__(self, dataset, opt, pipe, checkpoint):
+    def __init__(self, dataset, opt, pipe, diffusion, checkpoint=None):
         super().__init__(dataset.sh_degree)
         self.tb_writer = self.prepare_output_and_logger(dataset)
         self.scene = Scene(dataset, self)
@@ -213,7 +214,7 @@ class GBCTrainer(GaussianModel):
             torch.cuda.empty_cache()
 
 
-def main(args, lp, op, pp):
+def main(args, *extra_params):
     print("Optimizing " + args.model_path)
 
     # Initialize system state (RNG)
@@ -222,12 +223,12 @@ def main(args, lp, op, pp):
     # Start GUI server, configure and run training
     network_gui.init(args.ip, args.port)
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    GBCTrainer(lp, op, pp, args.start_checkpoint).training(args.test_iterations, args.save_iterations,
-                                                           args.checkpoint_iterations, args.debug_from)
+    GBCTrainer(*extra_params, checkpoint=args.start_checkpoint).training(
+        args.test_iterations, args.save_iterations, args.checkpoint_iterations, args.debug_from)
 
     # All done
     print("\nTraining complete.")
 
 
 if __name__ == "__main__":
-    main(*parse_args(ModelParams, OptimizationParams, PipelineParams))
+    main(*parse_args(ModelParams, OptimizationParams, PipelineParams, DiffusionParams))
