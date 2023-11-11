@@ -12,9 +12,10 @@
 import os
 import sys
 from argparse import ArgumentParser, Namespace
+from types import SimpleNamespace
 
 
-class GroupParams:
+class GroupParams(SimpleNamespace):
     pass
 
 
