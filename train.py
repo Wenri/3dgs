@@ -18,7 +18,7 @@ import torch
 from tqdm import tqdm
 
 from arguments import ModelParams, PipelineParams, OptimizationParams
-from arguments.diffusion import DiffusionParams
+from arguments.diffusion import DiffusionParams, DiffusionTrainer
 from arguments.gaussian import parse_args
 from gaussian_renderer import render, network_gui
 from scene import Scene, GaussianModel
@@ -36,6 +36,7 @@ class GBCTrainer(GaussianModel):
         self.opt = opt
         self.dataset = dataset
         self.pipe = pipe
+        self.diffusion_trainer = DiffusionTrainer(diffusion, self)
         if checkpoint:
             (model_params, first_iter) = torch.load(checkpoint)
             self.restore(model_params, self.opt)

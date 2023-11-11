@@ -12,7 +12,6 @@
 import json
 import os
 import random
-from pathlib import Path
 
 from arguments import ModelParams
 from scene.dataset_readers import sceneLoadTypeCallbacks, fetchPly
@@ -25,7 +24,7 @@ class Scene:
     gaussians: GaussianModel
 
     def __init__(self, args: ModelParams, gaussians: GaussianModel, load_iteration=None, shuffle=True,
-                 resolution_scales=[1.0]):
+                 resolution_scales=(1.0,)):
         """b
         :param path: Path to colmap scene main folder.
         """
