@@ -5,10 +5,15 @@ import numpy as np
 import torch
 
 from arguments import ParamGroup
+from gaussian_renderer import render
+from scene.cameras import Camera
 from submodules.diffusionerf.main_nerf import run
-from submodules.diffusionerf.nerf.learned_regularisation.patch_pose_generator import PatchPoseGenerator
+from submodules.diffusionerf.nerf.learned_regularisation.patch_pose_generator import PatchPoseGenerator, \
+    unpack_4x4_transform
 from submodules.diffusionerf.nerf.learned_regularisation.patch_regulariser import PatchRegulariser, \
     load_patch_diffusion_model, LLFF_DEFAULT_PSEUDO_INTRINSICS
+from submodules.diffusionerf.nerf.utils import get_rays
+from utils.graphics_utils import focal2fov
 
 
 class DiffusionParams(ParamGroup):
@@ -28,20 +33,28 @@ class DiffusionParams(ParamGroup):
         )
 
 
+class RandomCameraGenerator(PatchPoseGenerator):
+    def __init__(self, cameras):
+        super().__init__(poses=cameras,
+                         spatial_perturbation_magnitude=0.2,
+                         angular_perturbation_magnitude_rads=0.2 * np.pi,
+                         no_perturb_prob=0.,
+                         frustum_checker=None)
+
+    def _perturb_pose(self, camera):
+        pose_to_perturb = camera.world_view_transform.T.cpu()
+        pose_to_perturb = super()._perturb_pose(pose_to_perturb)
+        return pose_to_perturb
+
+
 class DiffusionTrainer(PatchRegulariser):
     def __init__(self, opt, trainer):
         print('main.nerf running with options', opt)
         assert opt.patch_regulariser_path
         self.opt = opt
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-        poses = [a.world_view_transform.T.cpu().numpy() for v in trainer.scene.train_cameras.values() for a in v]
-
         patch_diffusion_model = load_patch_diffusion_model(Path(opt.patch_regulariser_path))
-        pose_generator = PatchPoseGenerator(poses=poses,
-                                            spatial_perturbation_magnitude=0.2,
-                                            angular_perturbation_magnitude_rads=0.2 * np.pi,
-                                            no_perturb_prob=0.,
-                                            frustum_checker=None)
+        pose_generator = RandomCameraGenerator(cameras=[a for v in trainer.scene.train_cameras.values() for a in v])
         pseudo_intrinsics = LLFF_DEFAULT_PSEUDO_INTRINSICS
         print('Using patch full image pseudo intrinsics', pseudo_intrinsics)
         super().__init__(pose_generator=pose_generator,
@@ -53,6 +66,31 @@ class DiffusionTrainer(PatchRegulariser):
                          sample_downscale_factor=opt.patch_sample_downscale_factor,
                          uniform_in_depth_space=opt.normalise_diffusion_losses)
         self.model = trainer
+
+    def _render_patch_with_intrinsics(self, intrinsics, pose, model):
+        pseudo_intrinsics = (intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy)
+
+        patch_rays = get_rays(poses=pose.unsqueeze(0), intrinsics=pseudo_intrinsics,
+                              H=self._patch_size, W=self._patch_size, N=-1)
+        bg = torch.tensor(self.model.bg_color, dtype=torch.float32, device="cuda")
+        R, t = unpack_4x4_transform(pose.cpu())
+        viewpoint_cam = Camera(
+            uid=None, colmap_id=None, image_name=None, gt_alpha_mask=None, R=R, T=t,
+            image=torch.empty((0, intrinsics.width, intrinsics.height), dtype=torch.float32, device="cuda"),
+            FoVx=focal2fov(intrinsics.fx, intrinsics.width), FoVy=focal2fov(intrinsics.fy, intrinsics.height),
+        )
+        outputs = render(viewpoint_cam, self.model, self.model.pipe, bg)
+
+        if self._planar_depths:
+            depth = outputs['depth'] * patch_rays['rays_d_cam_z']
+        else:
+            depth = outputs['depth']
+
+        B = 1
+        pred_depth = depth.reshape(B, intrinsics.height, intrinsics.width, 1)
+        pred_rgb = outputs['image'].reshape(B, intrinsics.height, intrinsics.width, 3)
+
+        return pred_depth, pred_rgb, patch_rays, outputs
 
     def get_linear_dynamic_reg_modifier(self, global_step):
         dynamic_reg_start_step = self.opt.reg_ramp_start_step
@@ -67,7 +105,7 @@ class DiffusionTrainer(PatchRegulariser):
             dynamic_reg_modifier = 0.
         return dynamic_reg_modifier
 
-    def patch_regulariser(self, data, global_step):
+    def patch_regulariser(self, global_step, data):
         # t schedule
         initial_diffusion_time = self.opt.initial_diffusion_time
         patch_reg_start_step = self.opt.patch_reg_start_step

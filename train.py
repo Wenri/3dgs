@@ -36,6 +36,7 @@ class GBCTrainer(GaussianModel):
         self.opt = opt
         self.dataset = dataset
         self.pipe = pipe
+        self.bg_color = (1, 1, 1) if self.dataset.white_background else (0, 0, 0)
         self.diffusion_trainer = DiffusionTrainer(diffusion, self)
         if checkpoint:
             (model_params, first_iter) = torch.load(checkpoint)
@@ -44,8 +45,7 @@ class GBCTrainer(GaussianModel):
     def training(self, testing_iterations, saving_iterations, checkpoint_iterations, debug_from):
         first_iter = 0
 
-        bg_color = [1, 1, 1] if self.dataset.white_background else [0, 0, 0]
-        background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+        background = torch.tensor(self.bg_color, dtype=torch.float32, device="cuda")
 
         iter_start = torch.cuda.Event(enable_timing=True)
         iter_end = torch.cuda.Event(enable_timing=True)
@@ -98,7 +98,11 @@ class GBCTrainer(GaussianModel):
             # Loss
             gt_image = viewpoint_cam.original_image.cuda()
             Ll1 = l1_loss(image, gt_image)
-            loss = (1.0 - self.opt.lambda_dssim) * Ll1 + self.opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+
+            loss, patch_outputs = self.diffusion_trainer.patch_regulariser(iteration, SimpleNamespace(
+                bg=bg, viewpoint_cam=viewpoint_cam, **render_pkg._asdict()
+            ))
+            loss += (1.0 - self.opt.lambda_dssim) * Ll1 + self.opt.lambda_dssim * (1.0 - ssim(image, gt_image))
             loss.backward()
 
             iter_end.record()
