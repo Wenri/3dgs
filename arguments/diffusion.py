@@ -3,6 +3,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from einops import rearrange
 
 from arguments import ParamGroup
 from gaussian_renderer import render
@@ -27,9 +28,12 @@ class DiffusionParams(ParamGroup):
             patch_weight_finish=0.2,
             patch_reg_start_step=0,
             patch_reg_finish_step=2500,
+            reg_ramp_start_step=3000,
+            reg_ramp_finish_step=8000,
             initial_diffusion_time=0.1,
             normalise_diffusion_losses=True,
-            apply_geom_reg_to_patches=True,
+            apply_geom_reg_to_patches=False,
+            spread_loss_strength=1.5e-05,
         )
 
 
@@ -80,15 +84,13 @@ class DiffusionTrainer(PatchRegulariser):
             FoVx=focal2fov(intrinsics.fx, intrinsics.width), FoVy=focal2fov(intrinsics.fy, intrinsics.height),
         )
         outputs = render(viewpoint_cam, self.model, self.model.pipe, bg)
-
-        if self._planar_depths:
-            depth = outputs['depth'] * patch_rays['rays_d_cam_z']
-        else:
-            depth = outputs['depth']
-
         B = 1
-        pred_depth = depth.reshape(B, intrinsics.height, intrinsics.width, 1)
-        pred_rgb = outputs['image'].reshape(B, intrinsics.height, intrinsics.width, 3)
+
+        pred_depth = rearrange(outputs.depth, 'C H W -> 1 H W C')
+        if self._planar_depths:
+            pred_depth = pred_depth * patch_rays['rays_d_cam_z'].reshape(B, intrinsics.height, intrinsics.width, 1)
+
+        pred_rgb = rearrange(outputs.image, 'C H W -> 1 H W C')
 
         return pred_depth, pred_rgb, patch_rays, outputs
 
@@ -124,7 +126,7 @@ class DiffusionTrainer(PatchRegulariser):
         else:
             raise RuntimeError('Internal error')
         p_sample_patch = 0.25
-        if random.random() >= p_sample_patch:
+        if random.random() >= p_sample_patch or True:
             patch_outputs = self.get_diffusion_loss_with_rendered_patch(model=self.model, time=time)
         else:
             patch_outputs = self.get_diffusion_loss_with_sampled_patch(
