@@ -1,14 +1,15 @@
 import dataclasses
 import random
+from contextlib import nullcontext, AbstractContextManager
 from itertools import groupby
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 import torch
 from einops import rearrange
 from matplotlib import pyplot as plt
 
-from arguments import ParamGroup
 from gaussian_renderer import render
 from scene.cameras import Camera
 from submodules.diffusionerf.main_nerf import run
@@ -19,6 +20,7 @@ from submodules.diffusionerf.nerf.learned_regularisation.patch_regulariser impor
     load_patch_diffusion_model, make_random_patch_intrinsics, sample_patch_from_img
 from submodules.diffusionerf.nerf.utils import get_rays
 from utils.graphics_utils import focal2fov, fov2focal
+from . import ParamGroup
 
 
 class DiffusionParams(ParamGroup):
@@ -104,37 +106,47 @@ class DiffusionTrainer(PatchRegulariser):
 
     def _render_patch_with_intrinsics(self, intrinsics: IntrinsicsCamera, pose, model):
         pseudo_intrinsics = (intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy)
-        patch_rays = get_rays(poses=pose.unsqueeze(0), intrinsics=pseudo_intrinsics,
-                              H=self._patch_size, W=self._patch_size, N=-1)
         bg = torch.tensor(self.model.bg_color, dtype=torch.float32, device="cuda")
         outputs = render(intrinsics, self.model, self.model.pipe, bg)
-        B = 1
-        pred_depth = sample_patch_from_img(
-            img_intrinsics=intrinsics.ref_intrinsics, img=rearrange(outputs.depth, 'C H W -> H W C'),
-            patch_size=self._patch_size, rays_d=patch_rays['rays_d_cam'])
 
-        if self._planar_depths:
-            pred_depth = pred_depth * patch_rays['rays_d_cam_z'].reshape(B, self._patch_size, self._patch_size, 1)
-
-        pred_rgb = sample_patch_from_img(
-            img_intrinsics=intrinsics.ref_intrinsics, img=rearrange(outputs.image, 'C H W -> H W C'),
-            patch_size=self._patch_size, rays_d=patch_rays['rays_d_cam'])
+        pred_depth, pred_rgb, patch_rays = self._sample_patch_with_intrinsics(
+            rearrange(outputs.image, 'C H W -> H W C'),
+            rearrange(outputs.depth, 'C H W -> H W C'),
+            pose, intrinsics.ref_intrinsics, pseudo_intrinsics, gt_context=nullcontext)
 
         return pred_depth, pred_rgb, patch_rays, outputs
 
     def _sample_patch(self, image, image_intrinsics, pose, model):
         patch_intrinsics = self._get_random_patch_intrinsics(pose)
-        rendered_depth, rendered_rgb, patch_rays, render_outputs = self._render_patch_with_intrinsics(
-            intrinsics=patch_intrinsics, pose=pose, model=model
-        )
-        print('pose', pose)
-        with torch.no_grad():
-            gt_rgb = sample_patch_from_img(rays_d=patch_rays['rays_d_cam'], img=image,
-                                           img_intrinsics=image_intrinsics, patch_size=self._patch_size)
+        pseudo_intrinsics = (patch_intrinsics.fx, patch_intrinsics.fy, patch_intrinsics.cx, patch_intrinsics.cy)
+        rendered_depth, gt_rgb, patch_rays = self._sample_patch_with_intrinsics(
+            rearrange(image.viewpoint_cam.original_image, 'C H W -> H W C'),
+            rearrange(image.depth, 'C H W -> H W C'),
+            pose, image_intrinsics, pseudo_intrinsics)
+
+        return rendered_depth, gt_rgb, image
+
+    def _sample_patch_with_intrinsics(self, image, depth, pose, image_intrinsics, pseudo_intrinsics,
+                                      gt_context: Callable[[], AbstractContextManager] = torch.no_grad):
+        patch_rays = get_rays(poses=pose.unsqueeze(0), intrinsics=pseudo_intrinsics,
+                              H=self._patch_size, W=self._patch_size, N=-1)
+
+        pred_depth = sample_patch_from_img(
+            img_intrinsics=image_intrinsics, img=depth,
+            patch_size=self._patch_size, rays_d=patch_rays['rays_d_cam'])
+
+        if self._planar_depths:
+            pred_depth *= patch_rays['rays_d_cam_z'].reshape(1, self._patch_size, self._patch_size, 1)
+
+        with gt_context():
+            gt_rgb = sample_patch_from_img(
+                img_intrinsics=image_intrinsics, img=image,
+                rays_d=patch_rays['rays_d_cam'], patch_size=self._patch_size)
 
         if self.debug is not None:
-            self.debug(gt_rgb[0].detach(), rendered_rgb[0].detach())
-        return rendered_depth, gt_rgb, render_outputs
+            self.debug(gt_rgb[0].detach(), gt_rgb[0].detach())
+
+        return pred_depth, gt_rgb, patch_rays
 
     def get_linear_dynamic_reg_modifier(self, global_step):
         dynamic_reg_start_step = self.opt.reg_ramp_start_step
@@ -169,24 +181,21 @@ class DiffusionTrainer(PatchRegulariser):
             raise RuntimeError('Internal error')
         p_sample_patch = 0.25
         self.debug = None
-        if global_step % 500 == 0:
+        if global_step % 5000 == 0:
             self.debug = lambda gt, pred: (
                 plt.figure(),
                 plt.imshow(torch.concat((gt, pred), dim=1).cpu()),
                 plt.show()
             )
-        if random.random() >= p_sample_patch:
-            patch_outputs = self.get_diffusion_loss_with_rendered_patch(model=self.model, time=time)
-        else:
-            intrinsics = (
+
+        patch_outputs = self.get_diffusion_loss_with_rendered_patch(
+            model=self.model, time=time
+        ) if random.random() >= p_sample_patch else self.get_diffusion_loss_with_sampled_patch(
+            model=self.model, time=time, image=data, image_intrinsics=(
                 fov2focal(data.viewpoint_cam.FoVx, data.viewpoint_cam.image_width),
                 fov2focal(data.viewpoint_cam.FoVy, data.viewpoint_cam.image_height),
-                data.viewpoint_cam.image_width / 2, data.viewpoint_cam.image_height / 2,
-            )
-            patch_outputs = self.get_diffusion_loss_with_sampled_patch(
-                model=self.model, time=time, image=rearrange(data.image, 'C H W -> H W C'),
-                image_intrinsics=intrinsics, pose=data.viewpoint_cam.world_view_transform.T.inverse(),
-            )
+                data.viewpoint_cam.image_width / 2, data.viewpoint_cam.image_height / 2),
+            pose=data.viewpoint_cam.world_view_transform.T.inverse())
         loss = weight * patch_outputs.loss
 
         # Geometric reg
