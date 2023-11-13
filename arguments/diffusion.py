@@ -8,7 +8,6 @@ from typing import Callable
 import numpy as np
 import torch
 from einops import rearrange
-from matplotlib import pyplot as plt
 
 from gaussian_renderer import render
 from scene.cameras import Camera
@@ -58,7 +57,7 @@ class RandomCameraGenerator(PatchPoseGenerator):
 
 
 class IntrinsicsCamera(Camera, Intrinsics):
-    def __init__(self, ref, pose, *args, **kwargs):
+    def __init__(self, pose, ref=None, *args, **kwargs):
         self.call_super_init = True
         R, t = unpack_4x4_transform(pose.inverse().cpu())
         super().__init__(
@@ -67,7 +66,27 @@ class IntrinsicsCamera(Camera, Intrinsics):
             image=torch.empty((0, ref.height, ref.width), dtype=torch.float32),
             FoVx=focal2fov(ref.fx, ref.width), FoVy=focal2fov(ref.fy, ref.height),
         )
-        self.ref_intrinsics = (ref.fx, ref.fy, ref.cx, ref.cy)
+        assert ref.cx * 2 == ref.width and ref.cy * 2 == ref.height, \
+            f'Image size must be divisible by downscale factor'
+
+
+class PlotDebugger:
+    def __init__(self, enabled=False):
+        self.enabled = enabled
+        self.cache = []
+
+    def __bool__(self):
+        return self.enabled
+
+    def __call__(self, *args, **kwargs):
+        if not self.enabled:
+            return
+
+        from matplotlib import pyplot as plt
+        plt.figure()
+        plt.imshow(torch.concat((*self.cache, *args), dim=1).cpu())
+        self.cache.clear()
+        plt.show()
 
 
 class DiffusionTrainer(PatchRegulariser):
@@ -94,7 +113,7 @@ class DiffusionTrainer(PatchRegulariser):
                          sample_downscale_factor=opt.patch_sample_downscale_factor,
                          uniform_in_depth_space=opt.normalise_diffusion_losses)
         self.model = trainer
-        self.debug = None
+        self.debug = PlotDebugger()
 
     def _get_random_patch_intrinsics(self, pose):
         intrinsics_random, intrinsics_downscaled = make_random_patch_intrinsics(
@@ -102,7 +121,7 @@ class DiffusionTrainer(PatchRegulariser):
             full_image_intrinsics=self._full_image_intrinsics,
             downscale_factor=self._sample_downscale_factor,
         )
-        return IntrinsicsCamera(ref=intrinsics_downscaled, pose=pose, **dataclasses.asdict(intrinsics_random))
+        return IntrinsicsCamera(pose, intrinsics_downscaled, **dataclasses.asdict(intrinsics_random))
 
     def _render_patch_with_intrinsics(self, intrinsics: IntrinsicsCamera, pose, model):
         pseudo_intrinsics = (intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy)
@@ -112,7 +131,11 @@ class DiffusionTrainer(PatchRegulariser):
         pred_depth, pred_rgb, patch_rays = self._sample_patch_with_intrinsics(
             rearrange(outputs.image, 'C H W -> H W C'),
             rearrange(outputs.depth, 'C H W -> H W C'),
-            pose, intrinsics.ref_intrinsics, pseudo_intrinsics, gt_context=nullcontext)
+            pose, (intrinsics.fx, intrinsics.fy, intrinsics.image_width / 2, intrinsics.image_height / 2),
+            pseudo_intrinsics, gt_context=nullcontext)
+
+        if self.debug:
+            self.debug(pred_rgb[0].detach())
 
         return pred_depth, pred_rgb, patch_rays, outputs
 
@@ -123,6 +146,12 @@ class DiffusionTrainer(PatchRegulariser):
             rearrange(image.viewpoint_cam.original_image, 'C H W -> H W C'),
             rearrange(image.depth, 'C H W -> H W C'),
             pose, image_intrinsics, pseudo_intrinsics)
+
+        if self.debug:
+            pred_rgb = sample_patch_from_img(
+                img_intrinsics=image_intrinsics, img=rearrange(image.image, 'C H W -> H W C'),
+                rays_d=patch_rays['rays_d_cam'], patch_size=self._patch_size)
+            self.debug(gt_rgb[0].detach(), pred_rgb[0].detach())
 
         return rendered_depth, gt_rgb, image
 
@@ -142,9 +171,6 @@ class DiffusionTrainer(PatchRegulariser):
             gt_rgb = sample_patch_from_img(
                 img_intrinsics=image_intrinsics, img=image,
                 rays_d=patch_rays['rays_d_cam'], patch_size=self._patch_size)
-
-        if self.debug is not None:
-            self.debug(gt_rgb[0].detach(), gt_rgb[0].detach())
 
         return pred_depth, gt_rgb, patch_rays
 
@@ -180,13 +206,7 @@ class DiffusionTrainer(PatchRegulariser):
         else:
             raise RuntimeError('Internal error')
         p_sample_patch = 0.25
-        self.debug = None
-        if global_step % 5000 == 0:
-            self.debug = lambda gt, pred: (
-                plt.figure(),
-                plt.imshow(torch.concat((gt, pred), dim=1).cpu()),
-                plt.show()
-            )
+        self.debug.enabled = global_step % 500 == 0
 
         patch_outputs = self.get_diffusion_loss_with_rendered_patch(
             model=self.model, time=time
