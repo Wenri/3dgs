@@ -1,10 +1,12 @@
 import dataclasses
 import random
+from itertools import groupby
 from pathlib import Path
 
 import numpy as np
 import torch
 from einops import rearrange
+from matplotlib import pyplot as plt
 
 from arguments import ParamGroup
 from gaussian_renderer import render
@@ -14,7 +16,7 @@ from submodules.diffusionerf.nerf.learned_regularisation.intrinsics import Intri
 from submodules.diffusionerf.nerf.learned_regularisation.patch_pose_generator import PatchPoseGenerator, \
     unpack_4x4_transform
 from submodules.diffusionerf.nerf.learned_regularisation.patch_regulariser import PatchRegulariser, \
-    load_patch_diffusion_model, LLFF_DEFAULT_PSEUDO_INTRINSICS, make_random_patch_intrinsics, sample_patch_from_img
+    load_patch_diffusion_model, make_random_patch_intrinsics, sample_patch_from_img
 from submodules.diffusionerf.nerf.utils import get_rays
 from utils.graphics_utils import focal2fov, fov2focal
 
@@ -46,7 +48,6 @@ class RandomCameraGenerator(PatchPoseGenerator):
                          angular_perturbation_magnitude_rads=0.0 * np.pi,
                          no_perturb_prob=0.,
                          frustum_checker=None)
-        self.debug = None
 
     def _perturb_pose(self, camera):
         pose_to_perturb = camera.world_view_transform.T.cpu()
@@ -57,13 +58,12 @@ class RandomCameraGenerator(PatchPoseGenerator):
 class IntrinsicsCamera(Camera, Intrinsics):
     def __init__(self, ref, pose, *args, **kwargs):
         self.call_super_init = True
-        R, t = unpack_4x4_transform(pose.cpu())
+        R, t = unpack_4x4_transform(pose.inverse().cpu())
         super().__init__(
             *args, **kwargs,
-            uid=None, colmap_id=None, image_name=None, gt_alpha_mask=None, R=R, T=t,
+            uid=None, colmap_id=None, image_name=None, gt_alpha_mask=None, R=R.T, T=t,
             image=torch.empty((0, ref.height, ref.width), dtype=torch.float32),
-            FoVx=focal2fov(ref.fx, ref.height),
-            FoVy=focal2fov(ref.fy, ref.width),
+            FoVx=focal2fov(ref.fx, ref.width), FoVy=focal2fov(ref.fy, ref.height),
         )
         self.ref_intrinsics = (ref.fx, ref.fy, ref.cx, ref.cy)
 
@@ -76,7 +76,12 @@ class DiffusionTrainer(PatchRegulariser):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         patch_diffusion_model = load_patch_diffusion_model(Path(opt.patch_regulariser_path))
         pose_generator = RandomCameraGenerator(cameras=[a for v in trainer.scene.train_cameras.values() for a in v])
-        pseudo_intrinsics = LLFF_DEFAULT_PSEUDO_INTRINSICS
+        (pseudo_intrinsics, _), = groupby(Intrinsics(
+            fx=fov2focal(a.FoVx, a.image_width), fy=fov2focal(a.FoVy, a.image_height),
+            cx=a.image_width / 2, cy=a.image_height / 2, width=a.image_width, height=a.image_height,
+        ) for v in trainer.scene.train_cameras.values() for a in v)
+        # pseudo_intrinsics = LLFF_DEFAULT_PSEUDO_INTRINSICS
+
         print('Using patch full image pseudo intrinsics', pseudo_intrinsics)
         super().__init__(pose_generator=pose_generator,
                          patch_diffusion_model=patch_diffusion_model,
@@ -87,6 +92,7 @@ class DiffusionTrainer(PatchRegulariser):
                          sample_downscale_factor=opt.patch_sample_downscale_factor,
                          uniform_in_depth_space=opt.normalise_diffusion_losses)
         self.model = trainer
+        self.debug = None
 
     def _get_random_patch_intrinsics(self, pose):
         intrinsics_random, intrinsics_downscaled = make_random_patch_intrinsics(
@@ -129,6 +135,7 @@ class DiffusionTrainer(PatchRegulariser):
         if self.debug is not None:
             self.debug(gt_rgb[0].detach(), rendered_rgb[0].detach())
         return rendered_depth, gt_rgb, render_outputs
+
     def get_linear_dynamic_reg_modifier(self, global_step):
         dynamic_reg_start_step = self.opt.reg_ramp_start_step
         dynamic_reg_max_strength_step = self.opt.reg_ramp_finish_step
@@ -163,14 +170,12 @@ class DiffusionTrainer(PatchRegulariser):
         p_sample_patch = 0.25
         self.debug = None
         if global_step % 500 == 0:
-            from matplotlib import pyplot as plt
             self.debug = lambda gt, pred: (
-                plt.imshow(gt.cpu()),
                 plt.figure(),
-                plt.imshow(pred.cpu()),
+                plt.imshow(torch.concat((gt, pred), dim=1).cpu()),
                 plt.show()
             )
-        if random.random() >= p_sample_patch or True:
+        if random.random() >= p_sample_patch:
             patch_outputs = self.get_diffusion_loss_with_rendered_patch(model=self.model, time=time)
         else:
             intrinsics = (
@@ -180,7 +185,7 @@ class DiffusionTrainer(PatchRegulariser):
             )
             patch_outputs = self.get_diffusion_loss_with_sampled_patch(
                 model=self.model, time=time, image=rearrange(data.image, 'C H W -> H W C'),
-                image_intrinsics=intrinsics, pose=data.viewpoint_cam.world_view_transform.T,
+                image_intrinsics=intrinsics, pose=data.viewpoint_cam.world_view_transform.T.inverse(),
             )
         loss = weight * patch_outputs.loss
 
