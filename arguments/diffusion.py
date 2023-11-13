@@ -187,7 +187,7 @@ class DiffusionTrainer(PatchRegulariser):
         else:
             raise RuntimeError('Internal error')
         p_sample_patch = 0.25
-        self.debug.enabled = global_step % 500 == 0
+        # self.debug.enabled = global_step % 500 == 0
 
         patch_outputs = self.get_diffusion_loss_with_rendered_patch(
             model=self.model, time=time

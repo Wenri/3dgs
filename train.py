@@ -138,8 +138,8 @@ class GBCTrainer(GaussianModel):
                     self.add_densification_stats(viewspace_point_tensor, visibility_filter)
 
                     if iteration > self.opt.densify_from_iter and iteration % self.opt.densification_interval == 0:
-                        size_threshold = 20 if iteration > self.opt.opacity_reset_interval else None
-                        self.densify_and_prune(self.opt.densify_grad_threshold, 0.005, self.scene.cameras_extent,
+                        size_threshold = 500 if iteration > self.opt.opacity_reset_interval else None
+                        self.densify_and_prune(self.opt.densify_grad_threshold, 0.001, self.scene.cameras_extent,
                                                size_threshold)
 
                     if iteration % self.opt.opacity_reset_interval == 0 or (
