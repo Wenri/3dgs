@@ -30,23 +30,23 @@ class DiffusionParams(ParamGroup):
             patch_regulariser_path='models/rgbd-patch-diffusion.pt',
             patch_sample_downscale_factor=4,
             patch_weight_start=0.2,
-            patch_weight_finish=0.2,
+            patch_weight_finish=0.3,
             patch_reg_start_step=0,
-            patch_reg_finish_step=2500,
-            reg_ramp_start_step=3000,
-            reg_ramp_finish_step=8000,
+            patch_reg_finish_step=8000,
+            # reg_ramp_start_step=3000,
+            # reg_ramp_finish_step=8000,
             initial_diffusion_time=0.1,
             normalise_diffusion_losses=True,
-            apply_geom_reg_to_patches=False,
-            spread_loss_strength=1.5e-05,
+            # apply_geom_reg_to_patches=False,
+            # spread_loss_strength=1.5e-05,
         )
 
 
 class RandomCameraGenerator(PatchPoseGenerator):
     def __init__(self, cameras):
         super().__init__(poses=cameras,
-                         spatial_perturbation_magnitude=0.0,
-                         angular_perturbation_magnitude_rads=0.0 * np.pi,
+                         spatial_perturbation_magnitude=0.2,
+                         angular_perturbation_magnitude_rads=0.2 * np.pi,
                          no_perturb_prob=0.,
                          frustum_checker=None)
 
@@ -97,11 +97,11 @@ class DiffusionTrainer(PatchRegulariser):
         device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         patch_diffusion_model = load_patch_diffusion_model(Path(opt.patch_regulariser_path))
         pose_generator = RandomCameraGenerator(cameras=[a for v in trainer.scene.train_cameras.values() for a in v])
+        # pseudo_intrinsics = LLFF_DEFAULT_PSEUDO_INTRINSICS
         (pseudo_intrinsics, _), = groupby(Intrinsics(
             fx=fov2focal(a.FoVx, a.image_width), fy=fov2focal(a.FoVy, a.image_height),
             cx=a.image_width / 2, cy=a.image_height / 2, width=a.image_width, height=a.image_height,
         ) for v in trainer.scene.train_cameras.values() for a in v)
-        # pseudo_intrinsics = LLFF_DEFAULT_PSEUDO_INTRINSICS
 
         print('Using patch full image pseudo intrinsics', pseudo_intrinsics)
         super().__init__(pose_generator=pose_generator,
@@ -174,35 +174,16 @@ class DiffusionTrainer(PatchRegulariser):
 
         return pred_depth, gt_rgb, patch_rays
 
-    def get_linear_dynamic_reg_modifier(self, global_step):
-        dynamic_reg_start_step = self.opt.reg_ramp_start_step
-        dynamic_reg_max_strength_step = self.opt.reg_ramp_finish_step
-        # Linear scheme
-        if global_step > dynamic_reg_max_strength_step:
-            dynamic_reg_modifier = 1.
-        elif global_step > dynamic_reg_start_step:
-            dynamic_reg_modifier = (global_step - dynamic_reg_start_step) / (
-                    dynamic_reg_max_strength_step - dynamic_reg_start_step)
-        else:
-            dynamic_reg_modifier = 0.
-        return dynamic_reg_modifier
-
     def patch_regulariser(self, global_step, data):
         # t schedule
-        initial_diffusion_time = self.opt.initial_diffusion_time
-        patch_reg_start_step = self.opt.patch_reg_start_step
-        patch_reg_finish_step = self.opt.patch_reg_finish_step
-        weight_start = self.opt.patch_weight_start
-        weight_finish = self.opt.patch_weight_finish
-
-        lambda_t = (global_step - patch_reg_start_step) / (patch_reg_finish_step - patch_reg_start_step)
-        lambda_t = np.clip(lambda_t, 0., 1.)
-        weight = weight_start + (weight_finish - weight_start) * lambda_t
-
-        if global_step > patch_reg_finish_step:
+        lambda_t = np.clip((global_step - self.opt.patch_reg_start_step) /
+                           (self.opt.patch_reg_finish_step - self.opt.patch_reg_start_step),
+                           0., 1.)
+        weight = self.opt.patch_weight_start + (self.opt.patch_weight_finish - self.opt.patch_weight_start) * lambda_t
+        if global_step > self.opt.patch_reg_finish_step:
             time = 0.
-        elif global_step > patch_reg_start_step:
-            time = initial_diffusion_time * (1. - lambda_t)
+        elif global_step > self.opt.patch_reg_start_step:
+            time = self.opt.initial_diffusion_time * (1. - lambda_t)
         else:
             raise RuntimeError('Internal error')
         p_sample_patch = 0.25
@@ -216,14 +197,27 @@ class DiffusionTrainer(PatchRegulariser):
                 fov2focal(data.viewpoint_cam.FoVy, data.viewpoint_cam.image_height),
                 data.viewpoint_cam.image_width / 2, data.viewpoint_cam.image_height / 2),
             pose=data.viewpoint_cam.world_view_transform.T.inverse())
-        loss = weight * patch_outputs.loss
 
-        # Geometric reg
-        if self.opt.apply_geom_reg_to_patches:
-            spread_loss_weight = self.opt.spread_loss_strength * self.get_linear_dynamic_reg_modifier(global_step)
-            loss += spread_loss_weight * patch_outputs.render_outputs['loss_dist']
+        return patch_outputs, weight, time
 
-        return loss, patch_outputs
+    # def get_linear_dynamic_reg_modifier(self, global_step):
+    #     dynamic_reg_start_step = self.opt.reg_ramp_start_step
+    #     dynamic_reg_max_strength_step = self.opt.reg_ramp_finish_step
+    #     # Linear scheme
+    #     if global_step > dynamic_reg_max_strength_step:
+    #         dynamic_reg_modifier = 1.
+    #     elif global_step > dynamic_reg_start_step:
+    #         dynamic_reg_modifier = (global_step - dynamic_reg_start_step) / (
+    #                 dynamic_reg_max_strength_step - dynamic_reg_start_step)
+    #     else:
+    #         dynamic_reg_modifier = 0.
+    #
+    #     # Geometric reg
+    #     # if self.opt.apply_geom_reg_to_patches:
+    #     #     spread_loss_weight = self.opt.spread_loss_strength * self.get_linear_dynamic_reg_modifier(global_step)
+    #     #     loss += spread_loss_weight * patch_outputs.render_outputs['loss_dist']
+    #
+    #     return dynamic_reg_modifier
 
 
 if __name__ == '__main__':

@@ -8,14 +8,15 @@
 #
 # For inquiries contact  george.drettakis@inria.fr
 #
-
+import io
 import os
 import uuid
+from contextlib import redirect_stdout
 from random import randint
 from types import SimpleNamespace
 
 import torch
-from tqdm import tqdm
+from tqdm import trange
 
 from arguments import ModelParams, PipelineParams, OptimizationParams
 from arguments.diffusion import DiffusionParams, DiffusionTrainer
@@ -52,9 +53,9 @@ class GBCTrainer(GaussianModel):
 
         viewpoint_stack = None
         ema_loss_for_log = 0.0
-        progress_bar = tqdm(range(first_iter, self.opt.iterations), desc="Training progress")
         first_iter += 1
-        for iteration in range(first_iter, self.opt.iterations + 1):
+        progress_bar = trange(first_iter, self.opt.iterations + 1, desc="Training progress")
+        for iteration in progress_bar:
             if network_gui.conn is None:
                 network_gui.try_connect()
             while network_gui.conn is not None:
@@ -98,11 +99,14 @@ class GBCTrainer(GaussianModel):
             # Loss
             gt_image = viewpoint_cam.original_image.cuda()
             Ll1 = l1_loss(image, gt_image)
-
-            loss, patch_outputs = self.diffusion_trainer.patch_regulariser(iteration, SimpleNamespace(
-                bg=bg, viewpoint_cam=viewpoint_cam, **render_pkg._asdict()
-            ))
-            loss += (1.0 - self.opt.lambda_dssim) * Ll1 + self.opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            with redirect_stdout(io.StringIO()) as f:
+                patch_outputs, weight, time = self.diffusion_trainer.patch_regulariser(iteration, SimpleNamespace(
+                    bg=bg, viewpoint_cam=viewpoint_cam, **render_pkg._asdict()
+                ))
+            if f := f.getvalue().strip():
+                progress_bar.set_description_str(f)
+            loss = (1.0 - self.opt.lambda_dssim) * Ll1 + self.opt.lambda_dssim * (1.0 - ssim(image, gt_image))
+            loss += weight * patch_outputs.loss
             loss.backward()
 
             iter_end.record()
@@ -111,10 +115,13 @@ class GBCTrainer(GaussianModel):
                 # Progress bar
                 ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
                 if iteration % 10 == 0:
-                    progress_bar.set_postfix({"Loss": f"{ema_loss_for_log:.{7}f}"})
-                    progress_bar.update(10)
-                if iteration == self.opt.iterations:
-                    progress_bar.close()
+                    progress_bar.set_postfix({
+                        "Loss": f"{ema_loss_for_log:.{7}f}",
+                        "Ll1": f"{Ll1:.{7}f}",
+                        "Diffusion": f"{patch_outputs.loss:.{7}f}",
+                        "Weight": f"{weight:.{2}f}",
+                        "Time": f"{time:.{7}f}",
+                    })
 
                 # Log and save
                 self.training_report(self.tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end),
@@ -147,6 +154,8 @@ class GBCTrainer(GaussianModel):
                 if iteration in checkpoint_iterations:
                     print("\n[ITER {}] Saving Checkpoint".format(iteration))
                     torch.save((self.capture(), iteration), self.scene.model_path + "/chkpnt" + str(iteration) + ".pth")
+
+        progress_bar.close()
 
     @staticmethod
     def prepare_output_and_logger(args):
