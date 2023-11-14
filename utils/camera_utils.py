@@ -49,7 +49,7 @@ def loadCam(args, id, cam_info, resolution_scale):
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY, 
                   image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id, data_device=args.data_device)
+                  image_name=cam_info.image_name, uid=id, cx=cam_info.cx, cy=cam_info.cy, data_device=args.data_device)
 
 def cameraList_from_camInfos(cam_infos, resolution_scale, args):
     camera_list = []
@@ -64,7 +64,6 @@ def camera_to_JSON(id, camera : Camera):
     Rt[:3, :3] = camera.R.transpose()
     Rt[:3, 3] = camera.T
     Rt[3, 3] = 1.0
-
     W2C = np.linalg.inv(Rt)
     pos = W2C[:3, 3]
     rot = W2C[:3, :3]
@@ -77,6 +76,10 @@ def camera_to_JSON(id, camera : Camera):
         'position': pos.tolist(),
         'rotation': serializable_array_2d,
         'fy' : fov2focal(camera.FovY, camera.height),
-        'fx' : fov2focal(camera.FovX, camera.width)
+        'fx' : fov2focal(camera.FovX, camera.width),
+        'R': camera.R.tolist(),
+        'T': camera.T.tolist(),
+        'cx': camera.cx,
+        'cy': camera.cy
     }
     return camera_entry
