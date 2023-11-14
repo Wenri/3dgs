@@ -66,8 +66,7 @@ class IntrinsicsCamera(Camera, Intrinsics):
             image=torch.empty((0, ref.height, ref.width), dtype=torch.float32),
             FoVx=focal2fov(ref.fx, ref.width), FoVy=focal2fov(ref.fy, ref.height),
         )
-        assert ref.cx * 2 == ref.width and ref.cy * 2 == ref.height, \
-            f'Image size must be divisible by downscale factor'
+        self.orig_cx, self.orig_cy = ref.cx, ref.cy
 
 
 class PlotDebugger:
@@ -131,7 +130,7 @@ class DiffusionTrainer(PatchRegulariser):
         pred_depth, pred_rgb, patch_rays = self._sample_patch_with_intrinsics(
             rearrange(outputs.image, 'C H W -> H W C'),
             rearrange(outputs.depth, 'C H W -> H W C'),
-            pose, (intrinsics.fx, intrinsics.fy, intrinsics.image_width / 2, intrinsics.image_height / 2),
+            pose, (intrinsics.fx, intrinsics.fy, intrinsics.orig_cx, intrinsics.orig_cy),
             pseudo_intrinsics, gt_context=nullcontext)
 
         if self.debug:

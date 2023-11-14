@@ -18,9 +18,13 @@ from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, image, gt_alpha_mask,
-                 image_name, uid, cx=None, cy=None,
+                 image_name, uid,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device="cuda",
                  *args, **kwargs):
+        if kwargs and not self.call_super_init:
+            if (cx := kwargs.pop("cx", None)) is not None and (cy := kwargs.pop("cy", None)) is not None:
+                self.cx, self.cy = cx, cy
+
         super(Camera, self).__init__(*args, **kwargs)
 
         self.uid = uid
@@ -29,8 +33,6 @@ class Camera(nn.Module):
         self.T = T
         self.FoVx = FoVx
         self.FoVy = FoVy
-        self.cx = cx
-        self.cy = cy
         self.image_name = image_name
 
         try:
