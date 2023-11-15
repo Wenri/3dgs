@@ -99,8 +99,9 @@ class OptimizationParams(ParamGroup):
 
 
 def get_combined_args(parser: ArgumentParser):
+    from argparse import Namespace
     cmdlne_string = sys.argv[1:]
-    cfgfile_string = "Namespace()"
+    cfgfile_string = f"{Namespace.__name__}()"
     args_cmdline = parser.parse_args(cmdlne_string)
 
     try:
