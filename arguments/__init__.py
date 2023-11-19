@@ -9,6 +9,7 @@
 # For inquiries contact  george.drettakis@inria.fr
 #
 
+import ast
 import os
 import sys
 from argparse import ArgumentParser
@@ -99,9 +100,8 @@ class OptimizationParams(ParamGroup):
 
 
 def get_combined_args(parser: ArgumentParser):
-    from argparse import Namespace
     cmdlne_string = sys.argv[1:]
-    cfgfile_string = f"{Namespace.__name__}()"
+    cfgfile_string = "{}"
     args_cmdline = parser.parse_args(cmdlne_string)
 
     try:
@@ -113,9 +113,15 @@ def get_combined_args(parser: ArgumentParser):
     except TypeError:
         print("Config file not found at")
         pass
-    args_cfgfile = eval(cfgfile_string)
 
-    merged_dict = vars(args_cfgfile).copy()
+    args_cfgfile = ast.parse(cfgfile_string, mode='eval')
+    try:
+        merged_dict = ast.literal_eval(args_cfgfile)
+        assert isinstance(merged_dict, dict)
+    except ValueError:
+        assert isinstance(args_cfgfile.body, ast.Call)
+        merged_dict = {a.arg: ast.literal_eval(a.value) for a in args_cfgfile.body.keywords}
+
     for k, v in vars(args_cmdline).items():
         if v != None:
             merged_dict[k] = v
