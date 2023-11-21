@@ -122,7 +122,6 @@ def get_combined_args(parser: ArgumentParser):
         assert isinstance(args_cfgfile.body, ast.Call)
         merged_dict = {a.arg: ast.literal_eval(a.value) for a in args_cfgfile.body.keywords}
 
-    for k, v in vars(args_cmdline).items():
-        if v != None:
-            merged_dict[k] = v
+    merged_dict.update((k, v) for k, v in vars(args_cmdline).items() if v is not None)
+
     return SimpleNamespace(**merged_dict)
