@@ -11,8 +11,8 @@
 
 import ast
 import os
-import sys
 from argparse import ArgumentParser
+from contextlib import suppress
 from types import SimpleNamespace
 from typing import Optional
 
@@ -100,27 +100,21 @@ class OptimizationParams(ParamGroup):
 
 
 def get_combined_args(parser: ArgumentParser):
-    cmdlne_string = sys.argv[1:]
-    cfgfile_string = "{}"
-    args_cmdline = parser.parse_args(cmdlne_string)
+    args_cmdline = parser.parse_args()
+
+    cfgfilepath = os.path.join(args_cmdline.model_path, "cfg_args")
+    print("Looking for config file in", cfgfilepath)
+    ast_args: str | ast.Expression = '{}'
+    with suppress(TypeError, ValueError, FileNotFoundError), open(cfgfilepath) as f:
+        print("Config file found: {}".format(cfgfilepath))
+        ast_args = ast.parse(f.read(), mode='eval')
 
     try:
-        cfgfilepath = os.path.join(args_cmdline.model_path, "cfg_args")
-        print("Looking for config file in", cfgfilepath)
-        with open(cfgfilepath) as cfg_file:
-            print("Config file found: {}".format(cfgfilepath))
-            cfgfile_string = cfg_file.read()
-    except TypeError:
-        print("Config file not found at")
-        pass
-
-    args_cfgfile = ast.parse(cfgfile_string, mode='eval')
-    try:
-        merged_dict = ast.literal_eval(args_cfgfile)
+        merged_dict = ast.literal_eval(ast_args)
         assert isinstance(merged_dict, dict)
     except ValueError:
-        assert isinstance(args_cfgfile.body, ast.Call)
-        merged_dict = {a.arg: ast.literal_eval(a.value) for a in args_cfgfile.body.keywords}
+        assert isinstance(ast_args.body, ast.Call)
+        merged_dict = {a.arg: ast.literal_eval(a.value) for a in ast_args.body.keywords}
 
     merged_dict.update((k, v) for k, v in vars(args_cmdline).items() if v is not None)
 

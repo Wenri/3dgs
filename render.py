@@ -10,14 +10,15 @@
 #
 
 import os
-from argparse import ArgumentParser
+from functools import partial
 from os import makedirs
 
 import torch
 import torchvision
 from tqdm import tqdm
 
-from arguments import ModelParams, PipelineParams, get_combined_args
+from arguments import ModelParams, PipelineParams
+from arguments.gaussian import parse_test_args
 from gaussian_renderer import GaussianModel
 from gaussian_renderer import render
 from scene import Scene
@@ -55,19 +56,14 @@ def render_sets(dataset: ModelParams, iteration: int, pipeline: PipelineParams, 
                        background)
 
 
-if __name__ == "__main__":
-    # Set up command line argument parser
-    parser = ArgumentParser(description="Testing script parameters")
-    model = ModelParams(parser, sentinel=True)
-    pipeline = PipelineParams(parser)
-    parser.add_argument("--iteration", default=-1, type=int)
-    parser.add_argument("--skip_train", action="store_true")
-    parser.add_argument("--skip_test", action="store_true")
-    parser.add_argument("--quiet", action="store_true")
-    args = get_combined_args(parser)
+def main(args, model, pipeline):
     print("Rendering " + args.model_path)
 
     # Initialize system state (RNG)
     safe_state(args.quiet)
 
-    render_sets(model.extract(args), args.iteration, pipeline.extract(args), args.skip_train, args.skip_test)
+    render_sets(model, args.iteration, pipeline, args.skip_train, args.skip_test)
+
+
+if __name__ == "__main__":
+    main(*parse_test_args(partial(ModelParams, sentinel=True), PipelineParams))
