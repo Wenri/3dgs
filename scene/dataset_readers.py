@@ -12,8 +12,9 @@
 import json
 import os
 import sys
+from operator import attrgetter
 from pathlib import Path
-from typing import NamedTuple
+from typing import NamedTuple, Optional
 
 import numpy as np
 from PIL import Image
@@ -73,7 +74,7 @@ def getNerfppNorm(cam_info):
     return {"translate": translate, "radius": radius}
 
 
-def readColmapCameras(cam_extrinsics: dict, cam_intrinsics, images_folder):
+def readColmapCameras(cam_extrinsics: dict, cam_intrinsics, images_folder, mapping: Optional[str | os.PathLike] = None):
     cam_infos = []
     missing = {*()}
     for key, extr in cam_extrinsics.items():
@@ -107,19 +108,27 @@ def readColmapCameras(cam_extrinsics: dict, cam_intrinsics, images_folder):
             assert False, "Colmap camera model not handled: " \
                           "only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
 
-        image_path = os.path.join(images_folder, os.path.basename(extr.name))
-        image_name = os.path.basename(image_path).split(".")[0]
+        image_path = Path(images_folder, os.path.basename(extr.name))
+        image_name = image_path.stem
+
+        if mapping and isinstance(mapping, str | os.PathLike):
+            with open(mapping) as f:
+                mapping = dict(map(str.split, filter(None, map(str.strip, f))))
         try:
-            image = Image.open(image_path)
-
-            cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                                  image_path=image_path, image_name=image_name, width=width, height=height, cx=cx, cy=cy)
-            cam_infos.append(cam_info)
+            image = Image.open(image_path if not mapping else image_path.with_stem(mapping.get(image_name, image_name)))
         except FileNotFoundError:
+            print(f"Warning: image {image_path} not found in mapping, skipping...")
             missing.add(key)
+            continue
 
-    for key in missing:
-        del cam_extrinsics[key]
+        cam_info = CameraInfo(uid=uid, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                              image_path=os.fspath(image_path), image_name=image_name, width=width, height=height,
+                              cx=cx, cy=cy)
+        cam_infos.append(cam_info)
+
+    if not mapping:
+        for key in missing:
+            del cam_extrinsics[key]
 
     sys.stdout.write('\n')
     return cam_infos
@@ -168,17 +177,17 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    reading_dir = "images" if images == None else images
-    cam_infos_unsorted = readColmapCameras(cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics,
-                                           images_folder=os.path.join(path, reading_dir))
-    cam_infos = sorted(cam_infos_unsorted.copy(), key=lambda x: x.image_name)
+    reading_dir = "images" if images is None else images
 
-    if eval:
-        train_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold != 0]
-        test_cam_infos = [c for idx, c in enumerate(cam_infos) if idx % llffhold == 0]
-    else:
-        train_cam_infos = cam_infos
-        test_cam_infos = []
+    train_cam_infos = readColmapCameras(
+        cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
+        mapping=os.path.join(path, "train.txt"))
+    train_cam_infos.sort(key=attrgetter('image_name'))
+
+    test_cam_infos = readColmapCameras(
+        cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
+        mapping=os.path.join(path, "test.txt"))
+    test_cam_infos.sort(key=attrgetter('image_name'))
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
 
