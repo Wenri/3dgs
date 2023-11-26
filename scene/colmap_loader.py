@@ -112,9 +112,9 @@ def read_points3D_text(path):
             line = line.strip()
             if len(line) > 0 and line[0] != "#":
                 elems = line.split()
-                xyz = np.array(tuple(map(float, elems[1:4])))
-                rgb = np.array(tuple(map(int, elems[4:7])))
-                error = np.array(float(elems[7]))
+                xyz = np.array(tuple(map(float, elems[0:3])))
+                rgb = np.array(tuple(map(int, elems[3:6])))
+                error = np.array(float(elems[6]))
                 xyzs[count] = xyz
                 rgbs[count] = rgb
                 errors[count] = error
