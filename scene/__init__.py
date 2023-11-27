@@ -35,9 +35,9 @@ class Scene:
         if load_iteration:
             if load_iteration == -1:
                 self.loaded_iter = searchForMaxIteration(os.path.join(self.model_path, "point_cloud"))
-            else:
+            elif isinstance(load_iteration, int) or isinstance(load_iteration, str) and load_iteration.isdigit():
                 self.loaded_iter = load_iteration
-            print("Loading trained model at iteration {}".format(self.loaded_iter))
+            print("Loading trained model at iteration {}".format(self.loaded_iter or load_iteration))
 
         self.train_cameras = {}
         self.test_cameras = {}
@@ -84,6 +84,8 @@ class Scene:
                                                  "point_cloud",
                                                  "iteration_" + str(self.loaded_iter),
                                                  "point_cloud.ply"))
+        elif load_iteration:
+            self.gaussians.load_ply(load_iteration)
         else:
             self.gaussians.create_from_pcd(scene_info.point_cloud, self.cameras_extent)
 

@@ -12,6 +12,7 @@ import io
 import os
 import uuid
 from contextlib import redirect_stdout
+from pathlib import Path
 from random import randint
 from types import SimpleNamespace
 
@@ -32,7 +33,12 @@ class GBCTrainer(GaussianModel):
     def __init__(self, dataset, opt, pipe, diffusion, checkpoint=None):
         super().__init__(dataset.sh_degree)
         self.tb_writer = self.prepare_output_and_logger(dataset)
-        self.scene = Scene(dataset, self)
+        if (checkpoint := Path(checkpoint)).is_dir():
+            checkpoint, = checkpoint.glob("**/point_cloud.ply")
+            self.scene = Scene(dataset, self, load_iteration=checkpoint)
+            checkpoint = None
+        else:
+            self.scene = Scene(dataset, self)
         self.training_setup(opt)
         self.opt = opt
         self.dataset = dataset
