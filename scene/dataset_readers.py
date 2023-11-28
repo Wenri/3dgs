@@ -112,8 +112,11 @@ def readColmapCameras(cam_extrinsics: dict, cam_intrinsics, images_folder, mappi
         image_name = image_path.stem
 
         if mapping and isinstance(mapping, str | os.PathLike):
-            with open(mapping) as f:
-                mapping = dict(map(str.split, filter(None, map(str.strip, f))))
+            try:
+                with open(mapping) as f:
+                    mapping = dict(map(str.split, filter(None, map(str.strip, f))))
+            except FileNotFoundError:
+                mapping = {}
         try:
             image = Image.open(image_path if not mapping else image_path.with_stem(mapping.get(image_name, image_name)))
         except FileNotFoundError:

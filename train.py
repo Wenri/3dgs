@@ -33,7 +33,7 @@ class GBCTrainer(GaussianModel):
     def __init__(self, dataset, opt, pipe, diffusion, checkpoint=None):
         super().__init__(dataset.sh_degree)
         self.tb_writer = self.prepare_output_and_logger(dataset)
-        if (checkpoint := Path(checkpoint)).is_dir():
+        if checkpoint and (checkpoint := Path(checkpoint)).is_dir():
             checkpoint, = checkpoint.glob("**/point_cloud.ply")
             self.scene = Scene(dataset, self, load_iteration=checkpoint)
             checkpoint = None
