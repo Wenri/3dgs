@@ -14,6 +14,7 @@ import os
 import sys
 from operator import attrgetter
 from pathlib import Path
+from types import SimpleNamespace
 from typing import NamedTuple, Optional
 
 import numpy as np
@@ -23,6 +24,7 @@ from plyfile import PlyData, PlyElement
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
 from scene.gaussian_model import BasicPointCloud
+from submodules.diffusionerf.nerf.learned_regularisation.patch_pose_generator import unpack_4x4_transform
 from utils.graphics_utils import getWorld2View2, focal2fov, fov2focal
 from utils.sh_utils import SH2RGB
 
@@ -303,7 +305,50 @@ def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
     return scene_info
 
 
+def readDTUSceneInfo(path, images, white_background, extension=".jpg"):
+    cam_infos = []
+    path = Path(path)
+    for idx, p in enumerate(path.glob('cams*/*.txt')):
+        cam_data = {}
+        with p.open('r') as f:
+            fi = filter(None, map(str.strip, f))
+            k = next(fi)
+            cam_data[k] = np.loadtxt(fi, max_rows=4)
+            k = next(fi)
+            cam_data[k] = np.loadtxt(fi, max_rows=3)
+            cam_data = SimpleNamespace(depth_ranges=np.loadtxt(fi), **cam_data)
+
+            R, T = unpack_4x4_transform(np.linalg.inv(cam_data.extrinsic))
+
+            image_name = p.stem.rsplit('_', 1)[0]
+            image_path = os.path.join(path, images, image_name + extension)
+            if os.path.exists(image_path):
+                image = Image.open(image_path)
+
+                focal_length_x = cam_data.intrinsic[0, 0]
+                focal_length_y = cam_data.intrinsic[1, 1]
+                cx = cam_data.intrinsic[0, 2]
+                cy = cam_data.intrinsic[1, 2]
+                FovY = focal2fov(focal_length_y, 2 * cy)
+                FovX = focal2fov(focal_length_x, 2 * cx)
+
+                cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
+                                            image_path=image_path, image_name=image_name, width=image.size[0],
+                                            cx=cx, cy=cy, height=image.size[1]))
+
+    nerf_normalization = getNerfppNorm(cam_infos)
+    ply_path, *_ = path.glob('**/input.ply')
+    pcd = fetchPly(ply_path)
+    scene_info = SceneInfo(point_cloud=pcd,
+                           train_cameras=cam_infos,
+                           test_cameras=[],
+                           nerf_normalization=nerf_normalization,
+                           ply_path=ply_path)
+    return scene_info
+
+
 sceneLoadTypeCallbacks = {
     "Colmap": readColmapSceneInfo,
-    "Blender": readNerfSyntheticInfo
+    "Blender": readNerfSyntheticInfo,
+    "DTU": readDTUSceneInfo,
 }

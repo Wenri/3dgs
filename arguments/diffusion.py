@@ -97,11 +97,12 @@ class DiffusionTrainer(PatchRegulariser):
         patch_diffusion_model = load_patch_diffusion_model(Path(opt.patch_regulariser_path))
         pose_generator = RandomCameraGenerator(cameras=[a for v in trainer.scene.train_cameras.values() for a in v])
         # pseudo_intrinsics = LLFF_DEFAULT_PSEUDO_INTRINSICS
-        (pseudo_intrinsics, _), = groupby(Intrinsics(
+        (pseudo_intrinsics, _), *rems = groupby(Intrinsics(
             fx=fov2focal(a.FoVx, a.image_width), fy=fov2focal(a.FoVy, a.image_height),
             cx=a.image_width / 2, cy=a.image_height / 2, width=a.image_width, height=a.image_height,
         ) for v in trainer.scene.train_cameras.values() for a in v)
-
+        if rems:
+            print('Multiple Pseudo Intrinsics, len=', len(rems))
         print('Using patch full image pseudo intrinsics', pseudo_intrinsics)
         super().__init__(pose_generator=pose_generator,
                          patch_diffusion_model=patch_diffusion_model,

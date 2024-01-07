@@ -105,14 +105,17 @@ class GBCTrainer(GaussianModel):
             # Loss
             gt_image = viewpoint_cam.original_image.cuda()
             Ll1 = l1_loss(image, gt_image)
-            with redirect_stdout(io.StringIO()) as f:
-                patch_outputs, weight, time = self.diffusion_trainer.patch_regulariser(iteration, SimpleNamespace(
-                    bg=bg, viewpoint_cam=viewpoint_cam, **render_pkg._asdict()
-                ))
-            if f := f.getvalue().strip():
-                progress_bar.set_description_str(f)
             loss = (1.0 - self.opt.lambda_dssim) * Ll1 + self.opt.lambda_dssim * (1.0 - ssim(image, gt_image))
-            loss += weight * patch_outputs.loss
+            if False:
+                with redirect_stdout(io.StringIO()) as f:
+                    patch_outputs, weight, time = self.diffusion_trainer.patch_regulariser(iteration, SimpleNamespace(
+                        bg=bg, viewpoint_cam=viewpoint_cam, **render_pkg._asdict()
+                    ))
+                if f := f.getvalue().strip():
+                    progress_bar.set_description_str(f)
+                loss += weight * patch_outputs.loss
+            else:
+                patch_outputs = None
             loss.backward()
 
             iter_end.record()
@@ -121,13 +124,17 @@ class GBCTrainer(GaussianModel):
                 # Progress bar
                 ema_loss_for_log = 0.4 * loss.item() + 0.6 * ema_loss_for_log
                 if iteration % 10 == 0:
-                    progress_bar.set_postfix({
+                    bar_prefix = {
                         "Loss": f"{ema_loss_for_log:.{7}f}",
                         "Ll1": f"{Ll1:.{7}f}",
-                        "Diffusion": f"{patch_outputs.loss:.{7}f}",
-                        "Weight": f"{weight:.{2}f}",
-                        "Time": f"{time:.{7}f}",
-                    })
+                    }
+                    if patch_outputs:
+                        bar_prefix.update({
+                            "Diffusion": f"{patch_outputs.loss:.{7}f}",
+                            "Weight": f"{weight:.{2}f}",
+                            "Time": f"{time:.{7}f}",
+                        })
+                    progress_bar.set_postfix(bar_prefix)
 
                 # Log and save
                 self.training_report(self.tb_writer, iteration, Ll1, loss, l1_loss, iter_start.elapsed_time(iter_end),
