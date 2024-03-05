@@ -12,6 +12,7 @@
 import json
 import os
 import sys
+from itertools import chain
 from operator import attrgetter
 from pathlib import Path
 from types import SimpleNamespace
@@ -21,6 +22,7 @@ import numpy as np
 from PIL import Image
 from plyfile import PlyData, PlyElement
 
+from arguments.scenesplit import SceneSplit, MappingInfo
 from scene.colmap_loader import read_extrinsics_text, read_intrinsics_text, qvec2rotmat, \
     read_extrinsics_binary, read_intrinsics_binary, read_points3D_binary, read_points3D_text
 from scene.gaussian_model import BasicPointCloud
@@ -76,7 +78,7 @@ def getNerfppNorm(cam_info):
     return {"translate": translate, "radius": radius}
 
 
-def readColmapCameras(cam_extrinsics: dict, cam_intrinsics, images_folder, mapping: Optional[str | os.PathLike] = None):
+def readColmapCameras(cam_extrinsics: dict, cam_intrinsics, images_folder, mapping: Optional[MappingInfo] = None):
     cam_infos = []
     missing = {*()}
     for key, extr in cam_extrinsics.items():
@@ -93,35 +95,29 @@ def readColmapCameras(cam_extrinsics: dict, cam_intrinsics, images_folder, mappi
         R = np.transpose(qvec2rotmat(extr.qvec))
         T = np.array(extr.tvec)
 
-        if intr.model == "SIMPLE_PINHOLE":
-            focal_length_x = intr.params[0]
-            cx = intr.params[1]
-            cy = intr.params[2]
-            FovY = focal2fov(focal_length_x, height)
-            FovX = focal2fov(focal_length_x, width)
-        elif intr.model == "PINHOLE":
-            focal_length_x = intr.params[0]
-            focal_length_y = intr.params[1]
-            cx = intr.params[2]
-            cy = intr.params[3]
-            FovY = focal2fov(focal_length_y, height)
-            FovX = focal2fov(focal_length_x, width)
-        else:
-            assert False, "Colmap camera model not handled: " \
-                          "only undistorted datasets (PINHOLE or SIMPLE_PINHOLE cameras) supported!"
+        match intr.model:
+            case "SIMPLE_PINHOLE" | "SIMPLE_RADIAL":
+                focal_length_x = intr.params[0]
+                cx = intr.params[1]
+                cy = intr.params[2]
+                FovY = focal2fov(focal_length_x, height)
+                FovX = focal2fov(focal_length_x, width)
+            case "PINHOLE":
+                focal_length_x = intr.params[0]
+                focal_length_y = intr.params[1]
+                cx = intr.params[2]
+                cy = intr.params[3]
+                FovY = focal2fov(focal_length_y, height)
+                FovX = focal2fov(focal_length_x, width)
+            case _:
+                raise "Colmap camera model not handled: only undistorted datasets supported!"
 
         image_path = Path(images_folder, os.path.basename(extr.name))
         image_name = image_path.stem
 
-        if mapping and isinstance(mapping, str | os.PathLike):
-            try:
-                with open(mapping) as f:
-                    mapping = dict(map(str.split, filter(None, map(str.strip, f))))
-            except FileNotFoundError:
-                mapping = {}
         try:
-            image = Image.open(image_path if not mapping else image_path.with_stem(mapping.get(image_name, image_name)))
-        except FileNotFoundError:
+            image = Image.open(image_path if mapping is None else image_path.with_stem(mapping.map_name(image_name)))
+        except (FileNotFoundError, KeyError):
             print(f"Warning: image {image_path} not found in mapping, skipping...")
             missing.add(key)
             continue
@@ -182,16 +178,17 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         cam_extrinsics = read_extrinsics_text(cameras_extrinsic_file)
         cam_intrinsics = read_intrinsics_text(cameras_intrinsic_file)
 
-    reading_dir = "images" if images is None else images
+    reading_dir = os.path.join(path, "images" if images is None else images)
+    cam_mappings = SceneSplit(sorted(map(attrgetter('name'), cam_extrinsics.values())), reading_dir)
 
     train_cam_infos = readColmapCameras(
-        cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
-        mapping=os.path.join(path, "train.txt"))
+        cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=reading_dir,
+        mapping=cam_mappings.get_mapping('train'))
     train_cam_infos.sort(key=attrgetter('image_name'))
 
     test_cam_infos = readColmapCameras(
-        cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=os.path.join(path, reading_dir),
-        mapping=os.path.join(path, "test.txt"))
+        cam_extrinsics=cam_extrinsics, cam_intrinsics=cam_intrinsics, images_folder=reading_dir,
+        mapping=cam_mappings.get_mapping('test'))
     test_cam_infos.sort(key=attrgetter('image_name'))
 
     nerf_normalization = getNerfppNorm(train_cam_infos)
@@ -318,7 +315,7 @@ def readDTUSceneInfo(path, images, white_background, extension=".jpg"):
             cam_data[k] = np.loadtxt(fi, max_rows=3)
             cam_data = SimpleNamespace(depth_ranges=np.loadtxt(fi), **cam_data)
 
-            R, T = unpack_4x4_transform(np.linalg.inv(cam_data.extrinsic))
+            R, T = unpack_4x4_transform(cam_data.extrinsic)
 
             image_name = p.stem.rsplit('_', 1)[0]
             image_path = os.path.join(path, images, image_name + extension)
@@ -332,12 +329,12 @@ def readDTUSceneInfo(path, images, white_background, extension=".jpg"):
                 FovY = focal2fov(focal_length_y, 2 * cy)
                 FovX = focal2fov(focal_length_x, 2 * cx)
 
-                cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                                            image_path=image_path, image_name=image_name, width=image.size[0],
-                                            cx=cx, cy=cy, height=image.size[1]))
+                cam_infos.append(CameraInfo(uid=idx, R=R.T, T=T, FovY=FovY, FovX=FovX, image=image,
+                                            image_path=image_path, image_name=image_name, width=2 * cx,
+                                            cx=cx, cy=cy, height=2 * cy))
 
     nerf_normalization = getNerfppNorm(cam_infos)
-    ply_path, *_ = path.glob('**/input.ply')
+    ply_path, *_ = chain.from_iterable(path.glob(f'**/{s}') for s in ['input.ply', 'points3D.ply'])
     pcd = fetchPly(ply_path)
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=cam_infos,
