@@ -5,6 +5,9 @@ from difflib import get_close_matches
 from io import StringIO
 from pathlib import Path
 
+from submodules.PatchmatchNet.colmap_input import colmap_input_parser, main as colmap_input_main
+from submodules.PatchmatchNet.eval import eval_parser, main as eval_main
+
 
 class SceneSplit:
     _SPLIT = {"train", "test"}
@@ -15,6 +18,16 @@ class SceneSplit:
 
         if not all(self.path.joinpath(f'{name}.txt').exists() for name in self._SPLIT):
             self.gen_split(items, img_path)
+
+        kwargs = {'input_folder': os.fspath(self.path.joinpath('3_views', 'dense'))}
+        colmap_input_main(colmap_input_parser().parse_args(f'--{k}={v}' for k, v in kwargs.items()))
+
+        kwargs.update({
+            'output_folder': os.fspath(self.path.joinpath('3_views', 'patchmatch')),
+            'checkpoint_path': os.path.join('submodules', 'PatchmatchNet', 'checkpoints', 'params_000007.ckpt'),
+            'num_views': 7, 'image_max_dim': 2048, 'geo_mask_thres': 5, 'photo_thres': 0.8
+        })
+        eval_main(eval_parser().parse_args(f'--{k}={v}' for k, v in kwargs.items()))
 
     def gen_split(self, items, img_path: Path):
         possibilities = [os.path.splitext(it)[0] for it in items]
