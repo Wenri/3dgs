@@ -203,13 +203,17 @@ def readColmapSceneInfo(path, images, eval, llffhold=8):
         except:
             xyz, rgb, _ = read_points3D_text(txt_path)
         storePly(ply_path, xyz, rgb)
-    try:
-        pcd = fetchPly(ply_path)
-    except:
-        pcd = None
 
-    if (fused_ply := Path(path, 'fused.ply')).exists():
-        pcd = fetchPly(fused_ply)
+    pcd = {fused_ply.parent.name: fetchPly(fused_ply) for fused_ply in Path(path).glob('*_views/*/fused.ply')}
+
+    if 'patchmatch' in pcd:
+        pcd = pcd['patchmatch']
+    elif 'dense' in pcd:
+        pcd = pcd['dense']
+    elif pcd:
+        pcd = next(iter(pcd.values()))
+    else:
+        pcd = None
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,
