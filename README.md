@@ -34,6 +34,27 @@ Abstract: *Radiance Field methods have recently revolutionized novel-view synthe
 
 This research was funded by the ERC Advanced grant FUNGRAPH No 788065. The authors are grateful to Adobe for generous donations, the OPAL infrastructure from Université Côte d’Azur and for the HPC resources from GENCI–IDRIS (Grant 2022-AD011013409). The authors thank the anonymous reviewers for their valuable feedback, P. Hedman and A. Tewari for proofreading earlier drafts also T. Müller, A. Yu and S. Fridovich-Keil for helping with the comparisons.
 
+## About this fork (`Wenri/3dgs`)
+
+A research fork of the official 3DGS code focused on **few-shot / few-view** reconstruction. The `without_diffu` branch adds, on top of upstream:
+
+- **Explicit train/test split** — `readColmapSceneInfo` reads `train.txt`/`test.txt` from the dataset to build the camera split (replacing the `llffhold` every-8th heuristic), with optional image-name remapping and graceful skipping of missing images (`scene/dataset_readers.py`).
+- **Eval during rendering** — `render.py` reports per-set L1 + PSNR.
+- **Forked rasterizer** — the `diff-gaussian-rasterization` submodule points at [`Wenri/diff-gaussian-rasterization`](https://github.com/Wenri/diff-gaussian-rasterization) (bundled-GLM include dropped + depth-backward fix); `render` tolerates the extra return value (`radii, *_`).
+
+(The `main` branch additionally integrates a diffusion prior; `without_diffu` is the diffusion-free line.)
+
+### Datasets & pretrained models
+
+Datasets and trained models for this fork are **not tracked in git** — they are published as GitHub Releases. See **[`DATA.md`](DATA.md)** for the full manifest, restore paths, and per-asset licensing.
+
+```bash
+bash scripts/fetch_datasets.sh                              # download + verify + restore all datasets
+gh release download pretrained-3dgs-models -R Wenri/3dgs    # Inria pretrained models (mirror, non-commercial)
+```
+
+Packaging is reproducible via `scripts/publish_datasets.sh` and `scripts/publish_pretrained.sh` (dry-run by default).
+
 ## Step-by-step Tutorial
 
 Jonathan Stephens made a fantastic step-by-step tutorial for setting up Gaussian Splatting on your machine, along with instructions for creating usable datasets from videos. If the instructions below are too dry for you, go ahead and check it out [here](https://www.youtube.com/watch?v=UXtuigy_wYc).
