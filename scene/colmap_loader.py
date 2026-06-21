@@ -140,9 +140,9 @@ def read_points3D_binary(path_to_model_file):
         for p_id in range(num_points):
             binary_point_line_properties = read_next_bytes(
                 fid, num_bytes=43, format_char_sequence="QdddBBBd")
-            xyz = np.array(binary_point_line_properties[1:4])
-            rgb = np.array(binary_point_line_properties[4:7])
-            error = np.array(binary_point_line_properties[7])
+            xyz = np.array(binary_point_line_properties[0:3])
+            rgb = np.array(binary_point_line_properties[3:6])
+            error = np.array(binary_point_line_properties[6])
             track_length = read_next_bytes(
                 fid, num_bytes=8, format_char_sequence="Q")[0]
             track_elems = read_next_bytes(
