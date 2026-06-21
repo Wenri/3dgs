@@ -3,6 +3,10 @@
 output/
 runs/
 models/
+
+# Local DTU datasets and experiment outputs (not for version control)
+/data_output/
+/dtu_*/
 diff_rasterization/diff_rast.egg-info
 diff_rasterization/dist
 tensorboard_3d

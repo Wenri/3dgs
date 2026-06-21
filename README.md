@@ -1,3 +1,53 @@
+# Few-Shot 3D Gaussian Splatting with Diffusion & MVS Priors
+
+> **Research fork.** This adapts the original Inria **3D Gaussian Splatting** code (the upstream
+> README is preserved in full below) to the **sparse / few-view** regime — e.g. DTU with 3 or 15
+> input views. On top of vanilla 3DGS it adds:
+>
+> - **RGBD patch-diffusion regularization** (DiffusioNeRF) via the `diffusionerf` submodule and a
+>   pretrained patch-diffusion model at `models/rgbd-patch-diffusion.pt`;
+> - **Learning-based MVS** (`PatchmatchNet`) to produce a dense *fused* point cloud used to
+>   initialize the Gaussians, instead of the sparse COLMAP SfM points;
+> - a **depth-enabled rasterizer** (`diff-gaussian-rasterization` fork) that returns depth + alpha,
+>   which the diffusion loss consumes.
+>
+> See **[CLAUDE.md](CLAUDE.md)** for the architecture, build caveats, and the actual
+> train / render / metrics commands — they differ from the upstream instructions further down.
+
+## Cloning
+
+This repo uses submodules. Clone recursively over HTTPS:
+
+```shell
+git clone --recursive https://github.com/Wenri/3dgs.git
+```
+
+If you already cloned without `--recursive`:
+
+```shell
+git submodule update --init --recursive
+```
+
+## Quickstart
+
+```shell
+conda env create --file environment.yml      # env name: gaussian_splatting
+conda activate gaussian_splatting
+# Train one DTU scan (COLMAP layout: <scan>/sparse, <scan>/images). --eval holds out a test split.
+python train.py  -s <scan_dir> -m <output_dir> --eval
+python render.py  -m <output_dir>             # render train/test sets
+python metrics.py -m <output_dir>             # PSNR / SSIM / LPIPS
+```
+
+Building the submodule CUDA extensions is required before training: `diff-gaussian-rasterization`,
+`simple-knn`, and `diffusionerf`'s `raymarching` / `gridencoder` / `shencoder` (+ tiny-cuda-nn).
+The diffusion checkpoint `models/rgbd-patch-diffusion.pt` must be present. Details in
+[CLAUDE.md](CLAUDE.md).
+
+---
+
+<sub>The original upstream README follows.</sub>
+
 # 3D Gaussian Splatting for Real-Time Radiance Field Rendering
 Bernhard Kerbl*, Georgios Kopanas*, Thomas Leimkühler, George Drettakis (* indicates equal contribution)<br>
 | [Webpage](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/) | [Full Paper](https://repo-sam.inria.fr/fungraph/3d-gaussian-splatting/3d_gaussian_splatting_high.pdf) | [Video](https://youtu.be/T_kXY43VZnk) | [Other GRAPHDECO Publications](http://www-sop.inria.fr/reves/publis/gdindex.php) | [FUNGRAPH project page](https://fungraph.inria.fr) |<br>

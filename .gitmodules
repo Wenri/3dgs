@@ -12,4 +12,4 @@
 	url = https://github.com/Wenri/diffusionerf.git
 [submodule "submodules/PatchmatchNet"]
 	path = submodules/PatchmatchNet
-	url = git@github.com:Wenri/PatchmatchNet.git
+	url = https://github.com/Wenri/PatchmatchNet.git
