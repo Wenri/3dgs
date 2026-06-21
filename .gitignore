@@ -6,3 +6,19 @@ diff_rasterization/diff_rast.egg-info
 diff_rasterization/dist
 tensorboard_3d
 screenshots
+
+# Dataset release staging / download scratch (see scripts/publish_datasets.sh)
+/.release_stage/
+/.release_dl/
+
+# Local datasets (not tracked — too large for the repo)
+/3views/
+/PM/
+/data/
+/dbco/
+/ds/
+/dtu_3views_colmap/
+/horns_15views/
+/llff/
+/llff_3views_colmap/
+/pre/
